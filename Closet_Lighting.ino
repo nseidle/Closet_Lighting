@@ -10,6 +10,11 @@
 
   When fading the LEDs from zero there's a weird bouncing effect to the illumination (bright briefly then
   low then fades up again). Starting from 30 to 255 instead of 0 works well.
+
+  The black connector on the MOSFET board connects to 12V. The two pin connector on the Arduino goes
+  to the switch. The white two pin connector on the MOSFET board goes to the LEDs.
+
+  Some Arduino Pro Minis are 8MHz. Watchdog was increased to 2s for them.
 */
 
 #include <SimpleTimer.h> //https://github.com/jfturcot/SimpleTimer
@@ -21,10 +26,18 @@ SimpleTimer timer;
 //Pin definitions
 #define STAT_LED 13 //Onboard LED
 #define DOOR_SWITCH 11
-#define DOOR_SWITCH_GND 10
-#define LIGHT_MOSFET 9 //Must be PWM
+#define DOOR_SWITCH_GND 10 //Upstairs closets, cabin
+//#define DOOR_SWITCH_GND 12 //First model / AKA downstairs coat closet
 
-#define DOOR_ADJAR_TIMEOUT (5 * 60 * 1000L) //Max seconds before lights turn off
+//Must be PWM
+#define LIGHT_MOSFET 9
+//#define LIGHT_MOSFET 3 //Closet at Cabin
+
+#define DOOR_ADJAR_TIMEOUT (20L * 60L * 1000L) //Max seconds before lights turn off
+//#define DOOR_ADJAR_TIMEOUT (10L * 1000L) //Max seconds before lights turn off
+
+//#define MOSFET_CONTROL_NORMAL true //Cabin, upstairs, downstairs - when pin goes high, light goes on
+#define MOSFET_CONTROL_NORMAL false //Brother in law is inverted - when pin goes high, light goes off
 
 #define CLOSED 'c'
 #define OPEN 'o'
@@ -50,8 +63,16 @@ void setup()
 
   Serial.println("Closet Light Controller Online");
 
+//  while (1)
+//  {
+//    lightOn();
+//    delay(3000);
+//    lightOff();
+//    delay(500);
+//  }
+
   wdt_reset(); //Pet the dog
-  wdt_enable(WDTO_1S); //Unleash the beast
+  wdt_enable(WDTO_2S); //Unleash the beast
 }
 
 void loop()
@@ -68,10 +89,8 @@ void loop()
       doorState = OPEN;
 
       delay(250); //Delay until user gets the door open
-      
-      setBrightness(20, 255, 2000); //Turn on the LED strip. Starting at 20 still has the pulse on artifact
-      //setBrightness(0, 255, 3000); //Turn on the LED strip
-      //digitalWrite(LIGHT_MOSFET, HIGH);
+
+      lightOn();
       timeDoorWasOpened = millis();
     }
   }
@@ -82,21 +101,18 @@ void loop()
     {
       Serial.println("Door closed");
       doorState = CLOSED;
-      digitalWrite(LIGHT_MOSFET, LOW);
-      //analogWrite(LIGHT_MOSFET, 0); //Turn off the LED strip immediately
+      lightOff();
 
       //On a few reed switch installations it switch can trigger twice when closing the door
-      //Hand here for a second while door closes
+      //Hang here for a second while door closes
       delay(1000);
-      
     }
   }
   else if (doorState == TIMEOUT && digitalRead(DOOR_SWITCH) == LOW) //User has finally closed the door after a timeout
   {
     Serial.println("Door returned to closed");
     doorState = CLOSED;
-    digitalWrite(LIGHT_MOSFET, LOW); //Turn off LED
-    //analogWrite(LIGHT_MOSFET, 0); //Turn off the LED strip immediately
+    lightOff();
   }
 
   if (doorState == OPEN)
@@ -105,12 +121,43 @@ void loop()
     {
       Serial.println("Door timeout, LED off");
       doorState = TIMEOUT;
-      digitalWrite(LIGHT_MOSFET, LOW); //Turn off LED
-      //setBrightness(255, 0, 4000); //Turn off the LED strip slowly
+      lightOff();
     }
   }
 
   delay(1);
+}
+
+//Turn on LED
+void lightOn()
+{
+  if (MOSFET_CONTROL_NORMAL)
+  {
+    setBrightness(20, 255, 2000); //Turn on the LED strip. Starting at 20 still has the pulse on artifact
+    //setBrightness(0, 255, 3000); //Turn on the LED strip
+    //digitalWrite(LIGHT_MOSFET, HIGH);
+  }
+  else
+  {
+    //Inverted
+    setBrightness(255 - 20, 0, 2000); //Turn on the LED strip. Starting at 20 still has the pulse on artifact.
+  }
+}
+
+//Turn off LED
+void lightOff()
+{
+  if (MOSFET_CONTROL_NORMAL)
+  {
+    digitalWrite(LIGHT_MOSFET, LOW);
+    //analogWrite(LIGHT_MOSFET, 0); //Turn off the LED strip immediately
+    //setBrightness(255, 0, 4000); //Turn off the LED strip slowly
+  }
+  else
+  {
+    //Inverted
+    digitalWrite(LIGHT_MOSFET, HIGH);
+  }
 }
 
 //Blink the status LED to show we are alive
@@ -124,7 +171,7 @@ void setBrightness(float oldBrightness, float newBrightness, long overallTimeToG
 {
   //Low step numbers (30) mean we get there slowly, high numbers (100) mean we get there quickly
   //Low step numbers make it look stepped, high numbers make it more gradual
-  int STEPS = 100; 
+  int STEPS = 100;
 
   int brightDiff = abs(oldBrightness - newBrightness);
 
@@ -168,4 +215,3 @@ void setBrightness(float oldBrightness, float newBrightness, long overallTimeToG
     delay(overallTimeToGetThere / STEPS); //Some amount of time between steps
   }
 }
-
